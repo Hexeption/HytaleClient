@@ -1,0 +1,82 @@
+name: Windows Release build
+
+on:
+  push:
+    branches: [ main ]
+  release:
+    types: [created]
+  workflow_dispatch:
+
+jobs:
+  build-and-upload:
+    name: Build (Windows) and upload Release asset
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine tag and zip name
+        id: settag
+        shell: pwsh
+        run: |
+          # Determine tag: prefer release tag, then ref name (branch or tag), else short SHA
+          $tag = $env:GITHUB_EVENT_NAME -eq 'release' ? $env:GITHUB_REF_NAME : $env:GITHUB_REF_NAME
+          if (-not $tag -or $tag -eq '') {
+            if ($env:GITHUB_REF -match 'refs/heads/(.+)') { $tag = $Matches[1] }
+            elseif ($env:GITHUB_REF -match 'refs/tags/(.+)') { $tag = $Matches[1] }
+          }
+          if (-not $tag -or $tag -eq '') { $tag = $env:GITHUB_SHA.Substring(0,7) }
+          echo "TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $zip = "hytaleclient-windows-$tag.zip"
+          echo "ZIP_NAME=$zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Configure CMake (Visual Studio)
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build targets (Release)
+        shell: pwsh
+        run: |
+          cmake --build build --config Release --target Client Injector -- /m
+
+      - name: Prepare release directory
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          if (Test-Path build\bin\Client.dll) { Copy-Item build\bin\Client.dll out\ -Force }
+          elseif (Test-Path build\Client.dll) { Copy-Item build\Client.dll out\ -Force }
+          if (Test-Path build\bin\Injector.exe) { Copy-Item build\bin\Injector.exe out\ -Force }
+          elseif (Test-Path build\Injector.exe) { Copy-Item build\Injector.exe out\ -Force }
+          if (-not (Get-ChildItem -Path out -File | Where-Object { $_.Name -match 'Client.dll|Injector.exe' })) {
+            Write-Error "No build artifacts found in 'out' directory"
+            exit 1
+          }
+
+      - name: Zip artifacts
+        id: zip
+        shell: pwsh
+        run: |
+          $zipname = $env:ZIP_NAME
+          if (-not $zipname) { Write-Error "ZIP_NAME not set"; exit 1 }
+          if (Test-Path $zipname) { Remove-Item $zipname -Force }
+          Compress-Archive -Path out\* -DestinationPath $zipname -Force
+          Write-Output "ZIP=$zipname" | Out-File -FilePath build\zipinfo.txt -Encoding utf8
+
+      - name: Upload zip to Release
+        if: ${{ github.event_name == 'release' }}
+        uses: actions/upload-release-asset@v1
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ${{ github.workspace }}\${{ env.ZIP_NAME }}
+          asset_name: ${{ env.ZIP_NAME }}
+          asset_content_type: application/zip
+
+      - name: Fallback upload artifact (manual/branch)
+        if: ${{ github.event_name != 'release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: hytaleclient-windows
+          path: |
+            build\zipinfo.txt
+            ${{ env.ZIP_NAME }}
