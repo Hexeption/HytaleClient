@@ -44,14 +44,29 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
-          if (Test-Path build\bin\Client.dll) { Copy-Item build\bin\Client.dll out\ -Force }
-          elseif (Test-Path build\Client.dll) { Copy-Item build\Client.dll out\ -Force }
-          if (Test-Path build\bin\Injector.exe) { Copy-Item build\bin\Injector.exe out\ -Force }
-          elseif (Test-Path build\Injector.exe) { Copy-Item build\Injector.exe out\ -Force }
-          if (-not (Get-ChildItem -Path out -File | Where-Object { $_.Name -match 'Client.dll|Injector.exe' })) {
-            Write-Error "No build artifacts found in 'out' directory"
+
+          # use fixed Release paths for artifacts
+          $clientPath = Join-Path -Path "build\bin\Release" -ChildPath "Client.dll"
+          $injectorPath = Join-Path -Path "build\bin\Release" -ChildPath "Injector.exe"
+
+          if (Test-Path $clientPath) {
+            Write-Host "Copying Client.dll from: $clientPath"
+            Copy-Item $clientPath out\ -Force
+          } else {
+            Write-Error "Expected artifact not found: $clientPath"
             exit 1
           }
+
+          if (Test-Path $injectorPath) {
+            Write-Host "Copying Injector.exe from: $injectorPath"
+            Copy-Item $injectorPath out\ -Force
+          } else {
+            Write-Error "Expected artifact not found: $injectorPath"
+            exit 1
+          }
+
+          # list out folder for debugging
+          Get-ChildItem -Path out -File | Format-Table -AutoSize
 
       - name: Zip artifacts
         id: zip
